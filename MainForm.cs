@@ -208,10 +208,12 @@ namespace FakeFreezeApp
             notifyIconApp.Text = "蹲坑守护";
             notifyIconApp.Visible = true;
 
+            notifyIconApp.MouseClick += NotifyIconApp_MouseClick;
+
             ContextMenuStrip menu = new ContextMenuStrip();
 
-            // "开始守护"：手动启动假死
-            var menuItemStart = new ToolStripMenuItem("开始守护");
+            // "启动守护"：手动启动假死
+            var menuItemStart = new ToolStripMenuItem("启动守护");
             menuItemStart.Click += menuItemStart_Click;
             menu.Items.Add(menuItemStart);
 
@@ -252,11 +254,25 @@ namespace FakeFreezeApp
             CheckStartupStatus(menuItemStartup);
         }
 
-        // 点击"开始守护"
+        // 点击"启动守护"
         private void menuItemStart_Click(object sender, EventArgs e)
         {
             StartFakeFreeze();
-            ShowAutoCloseMessageBox("守护模式已启动！", "提示", 500);
+            ShowAutoCloseMessageBox("已启动守护模式！", "提示", 500);
+        }
+
+        // 通过左键点击托盘"启动守护"
+        private async void NotifyIconApp_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                // 等待2秒
+                await Task.Delay(2000);
+                // 如果是左键点击托盘图标，则锁定
+                StartFakeFreeze();
+                ShowAutoCloseMessageBox("已启动守护模式！", "提示", 500);
+                //ShowAutoCloseMessageBox("已通过左键点击托盘启动守护模式！", "提示", 500);
+            }
         }
 
         // 点击"配置密码"
@@ -624,7 +640,7 @@ namespace FakeFreezeApp
             const int WTS_SESSION_UNLOCK = 0x8; // 用户解锁
 
             base.WndProc(ref m);
-            
+
             if (m.Msg == WM_WTSSESSION_CHANGE)
             {
                 int eventId = m.WParam.ToInt32();
