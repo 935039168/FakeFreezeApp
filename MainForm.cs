@@ -204,7 +204,7 @@ namespace FakeFreezeApp
         #region 托盘图标与菜单
         private void InitializeTrayIcon()
         {
-            notifyIconApp.Icon = SystemIcons.Shield;
+            notifyIconApp.Icon = new Icon("shield.ico"); // 加载自定义图标
             notifyIconApp.Text = "蹲坑守护";
             notifyIconApp.Visible = true;
 

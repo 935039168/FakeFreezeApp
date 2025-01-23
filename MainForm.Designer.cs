@@ -35,7 +35,6 @@
             // 
             // notifyIconApp
             // 
-            notifyIconApp.Icon = (Icon)resources.GetObject("notifyIconApp.Icon");
             notifyIconApp.Text = "蹲坑守护";
             notifyIconApp.Visible = true;
             // 

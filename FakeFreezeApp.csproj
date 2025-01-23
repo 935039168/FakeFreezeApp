@@ -13,6 +13,13 @@
 		<FileVersion>1.0.0.0</FileVersion>
 		<!-- 产品/信息版本（InformationalVersion），可包含额外标识如 build、branch、commit -->
 		<InformationalVersion>1.0.0-beta</InformationalVersion>
+		<ApplicationIcon>shield.ico</ApplicationIcon>
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <Content Include="shield.ico">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </Content>
+	</ItemGroup>
 
 </Project>
