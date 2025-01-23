@@ -624,7 +624,7 @@ namespace FakeFreezeApp
             const int WTS_SESSION_UNLOCK = 0x8; // ”√ªßΩ‚À¯
 
             base.WndProc(ref m);
-
+            
             if (m.Msg == WM_WTSSESSION_CHANGE)
             {
                 int eventId = m.WParam.ToInt32();
