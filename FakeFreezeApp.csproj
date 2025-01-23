@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net8.0-windows</TargetFramework>
+		<Nullable>enable</Nullable>
+		<UseWindowsForms>true</UseWindowsForms>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<!-- 程序集版本（AssemblyVersion） -->
+		<AssemblyVersion>1.0.0.0</AssemblyVersion>
+		<!-- 文件版本（FileVersion） -->
+		<FileVersion>1.0.0.0</FileVersion>
+		<!-- 产品/信息版本（InformationalVersion），可包含额外标识如 build、branch、commit -->
+		<InformationalVersion>1.0.0-beta</InformationalVersion>
+	</PropertyGroup>
+
+</Project>
